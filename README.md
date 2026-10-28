@@ -7,7 +7,7 @@
 | 版本 | 網址 | 可以做什麼 |
 |---|---|---|
 | 共用版（主要使用） | https://claude.ai/artifact/KBmtG4AephhbVw5SeRDjHH | 觀看、畫線、改備註、刪除；所有人即時同步。畫線需要登入 Claude 帳號。 |
-| GitHub 唯讀版 | 本 repository 的 GitHub Pages 網址 | 只能觀看，不用登入。路線是 `routes.json` 裡的快照。 |
+| GitHub 唯讀版 | https://hanyingyilan.github.io/yilan-street-map/ | 只能觀看，不用登入。路線是 `routes.json` 裡的快照。 |
 
 ## 畫線方式（共用版）
 
