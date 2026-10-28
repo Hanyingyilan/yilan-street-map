@@ -138,12 +138,42 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); ou
   display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: center; max-width: calc(100% - 24px);
   background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; box-shadow: 0 6px 24px rgb(0 0 0 / .18); }
 .drawbar .len { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 13px; padding: 0 6px; color: var(--muted); }
+.drawbar .barhint { flex-basis: 100%; margin: 0; text-align: center; font-size: 12px; color: var(--muted); line-height: 1.5; }
+.drawbar .btn.on { background: var(--ink); border-color: var(--ink); color: var(--panel); }
+#map.drawing { touch-action: none; }
+.handle { border-radius: 50%; background: var(--panel); border: 3px solid var(--ink); box-shadow: 0 1px 6px rgb(0 0 0 / .35); box-sizing: border-box; cursor: grab; }
+.cutmark { border-radius: 50%; background: var(--danger); border: 2px solid var(--panel); box-sizing: border-box; }
+.me-dot { border-radius: 50%; background: #1a73e8; border: 3px solid #fff; box-shadow: 0 0 0 1px rgb(0 0 0 / .25); box-sizing: border-box; }
+.locate a { font-size: 18px; line-height: 30px; font-weight: 700; text-decoration: none; }
+.locate a.on { color: #1a73e8; }
+.seg { align-self: flex-start; display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { font: inherit; font-size: 13px; border: none; background: var(--panel); color: var(--ink); padding: 8px 12px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--panel); font-weight: 700; }
+.covbar { position: relative; }
+.covbar i { position: absolute; left: 0; top: 0; }
+.covbar i.one { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+.fab { display: none; }
+.hint-touch { display: none; }
+@media (pointer: coarse) {
+  .hint-touch { display: inline; } .hint-mouse { display: none; }
+  .btn { min-height: 44px; }
+  .link { padding: 9px 10px; font-size: 13px; }
+  .seg button { padding: 11px 14px; }
+}
 .toast { position: absolute; z-index: 950; left: 50%; transform: translateX(-50%); top: calc(14px + env(safe-area-inset-top, 0px)); background: var(--ink); color: var(--panel); padding: 8px 14px; border-radius: 8px; font-size: 13px; max-width: calc(100% - 32px); }
 
 @media (max-width: 760px) {
   .app { display: block; height: auto; }
-  #map { height: 64svh; }
+  #map { height: 72svh; }
   .panel { border-left: none; border-top: 1px solid var(--line); overflow: visible; }
+  .fab { display: block; position: absolute; z-index: 890; right: calc(12px + env(safe-area-inset-right, 0px)); bottom: calc(22px + env(safe-area-inset-bottom, 0px));
+    box-shadow: 0 6px 20px rgb(0 0 0 / .25); border-radius: 999px; padding: 12px 18px; }
+  body.busy .fab { display: none; }
+  .drawbar { left: calc(8px + env(safe-area-inset-left, 0px)); right: calc(8px + env(safe-area-inset-right, 0px)); transform: none; max-width: none;
+    bottom: calc(10px + env(safe-area-inset-bottom, 0px)); gap: 6px; padding: 8px; }
+  .drawbar .btn { flex: 1 1 auto; padding: 8px 10px; font-size: 13.5px; }
+  .drawbar .len { flex: 0 0 auto; }
 }
 @media (prefers-reduced-motion: reduce) { .covbar i { transition: none; } }
 </style>
@@ -155,10 +185,21 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); ou
     <div class="toast" id="toast" hidden></div>
     <div class="drawbar" id="drawbar" hidden>
       <span class="len" id="draftLen">0 m</span>
+      <button class="btn" id="btnSide" type="button">兩側都掃</button>
       <button class="btn" id="btnUndo" type="button">復原一點</button>
       <button class="btn" id="btnCancel" type="button">取消</button>
       <button class="btn primary" id="btnFinish" type="button">完成並儲存</button>
     </div>
+    <div class="drawbar" id="editbar" hidden>
+      <p class="barhint" id="editHint">拖曳兩端的圓點：拖回線上＝縮短，往外拖＝沿著路延長</p>
+      <span class="len" id="editLen">0 m</span>
+      <button class="btn" id="btnESide" type="button">兩側都掃</button>
+      <button class="btn" id="btnCut" type="button">剪掉一段</button>
+      <button class="btn" id="btnEUndo" type="button">復原</button>
+      <button class="btn" id="btnECancel" type="button">取消</button>
+      <button class="btn primary" id="btnESave" type="button">儲存變更</button>
+    </div>
+    <button class="btn primary fab" id="fabDraw" type="button">＋ 畫走過的路</button>
   </div>
 
   <aside class="panel">
@@ -173,8 +214,9 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); ou
       <div class="stat"><b id="sKm">0.0</b><span>已走公里</span></div>
     </div>
     <div class="cov">
-      <div class="covbar"><i id="covFill"></i></div>
+      <div class="covbar"><i class="one" id="covOne"></i><i id="covFill"></i></div>
       <small id="covText">住宅區・商業區街道覆蓋率 0%</small>
+      <small id="covSub"></small>
       <label class="check"><input type="checkbox" id="fZone"> 在地圖上顯示計入覆蓋率的範圍</label>
     </div>
 
@@ -193,10 +235,16 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); ou
         <span class="lbl">線條顏色</span>
         <div class="swatches" id="swatches"></div>
       </div>
+      <div class="field">
+        <span class="lbl">掃街側</span>
+        <div class="seg" id="sideSeg" role="group" aria-label="掃街側"></div>
+        <p class="hint">左、右以畫線的前進方向為準。選單側時，線會畫在路的那一側；兩側分別走過，覆蓋率才算完整。</p>
+      </div>
       <label class="check"><input type="checkbox" id="fSnap" checked> 自動沿著馬路、巷弄畫線</label>
       <button class="btn primary" id="btnDraw" type="button">開始畫線</button>
       <a class="btn primary" id="editLink" href="https://claude.ai/artifact/KBmtG4AephhbVw5SeRDjHH" target="_blank" rel="noopener" style="text-align:center;text-decoration:none" hidden>到共用版畫線（需登入 Claude）</a>
-      <p class="hint">在走過的路上<kbd>依序點</kbd>轉角或沿途的點，線會自動沿著馬路和巷弄連起來，不會穿過房子；<kbd>按住拖曳</kbd>也會自動貼著路走；<kbd>雙擊</kbd>或按「完成並儲存」結束。畫線時地圖不能拖動，可用滾輪或 +/− 縮放。</p>
+      <p class="hint"><span class="hint-mouse">在走過的路上<kbd>依序點</kbd>轉角或沿途的點，線會自動沿著馬路和巷弄連起來，不會穿過房子；<kbd>按住拖曳</kbd>也會自動貼著路走；<kbd>雙擊</kbd>或按「完成並儲存」結束。畫線時地圖不能拖動，可用滾輪或 +/− 縮放。</span><span class="hint-touch">用手指<kbd>點</kbd>路口，或<kbd>按住沿路滑</kbd>，線會自動貼著路走。畫線時要移動或縮放地圖，請用<kbd>兩指</kbd>。左上角 ◎ 可以顯示你現在的位置。</span></p>
+      <p class="hint">畫錯了？在清單按「改路線」，可以拖曳兩端縮短、延長，或剪掉中間一段。</p>
     </div>
 
     <div class="section">
@@ -282,7 +330,8 @@ map.fitBounds(bounds.isValid() ? bounds : [[24.70, 121.72], [24.79, 121.80]], { 
 map.setMaxBounds(bounds.pad(0.35));
 map.setView([24.7555, 121.7545], 15.5); // open on downtown so street names are readable right away
 styleBase();
-map.on("zoomend", () => { styleBase(); styleWalks(); });
+// one-side walks are offset in screen pixels, so their geometry follows the zoom
+map.on("zoomend", () => { styleBase(); renderWalks(); if (draftLine) { styleDraft(); updateDraft(); } if (editing) renderEdit(); });
 
 // ---------- labels: street names drawn along roads, landmark icons + names ----------
 const lc = $("labels"), lctx = lc.getContext("2d");
@@ -502,51 +551,102 @@ function walkLines(w) {
   return out;
 }
 const walkLen = w => walkLines(w).reduce((a, f) => a + lengthM(f), 0);
+const flatToXY = f => { const a = []; for (let i = 0; i < f.length; i += 2) a.push([mx(f[i + 1]), my(f[i])]); return a; };
+
+// ---------- street sides: 0 both, 1 left, 2 right of the drawing direction ----------
+const SIDE_TXT = ["兩側都掃", "只掃左側", "只掃右側"];
+const leftN = (a, b) => { const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy); return l ? [-dy / l, dx / l] : null; };
+// shift a line sideways by d meters (positive = left), mitering the corners
+function offsetXY(xy, d) {
+  if (!d || xy.length < 2) return xy;
+  const ns = []; for (let i = 1; i < xy.length; i++) ns.push(leftN(xy[i - 1], xy[i]));
+  for (let i = 0; i < ns.length; i++) if (!ns[i]) ns[i] = ns[i - 1] || ns.find(Boolean) || [0, 0];
+  return xy.map((p, i) => {
+    const n1 = ns[Math.max(0, i - 1)], n2 = ns[Math.min(ns.length - 1, i)];
+    let ax = n1[0] + n2[0], ay = n1[1] + n2[1]; const al = Math.hypot(ax, ay);
+    if (al < 1e-6) return [p[0] + n1[0] * d, p[1] + n1[1] * d]; // U-turn
+    ax /= al; ay /= al;
+    const k = 1 / Math.max(0.4, ax * n1[0] + ay * n1[1]);
+    return [p[0] + ax * d * k, p[1] + ay * d * k];
+  });
+}
+// one-side lines are thinner and sit on that half of the road
+const sideOffsetM = side => side ? (side === 1 ? 1 : -1) * walkWeight() * 0.32 * metersPerPixel() : 0;
+const sideWeight = side => walkWeight() * (side ? 0.55 : 1);
+const sideLLs = (lines, side) => lines.map(l => offsetXY(l, sideOffsetM(side)).map(xyToLL));
 
 // ---------- walks (shared) ----------
-let walks = [], walkLayers = new Map(), selected = null, col = null;
+let walks = [], walkLayers = new Map(), selected = null, col = null, editing = null;
 const walkWeight = () => Math.max(5, Math.min(16, 6 * Math.pow(1.35, map.getZoom() - 15)));
 function colorOf(w) { return T.walk[(w.color | 0) % 4] || T.walk[0]; }
 function styleWalks() {
-  walkLayers.forEach((l, id) => l.setStyle({ color: colorOf(walks.find(w => w.id === id) || {}), weight: walkWeight() * (id === selected ? 1.5 : 1), opacity: id === selected ? 0.95 : 0.72, lineCap: "round", lineJoin: "round" }));
+  walkLayers.forEach((l, id) => {
+    const w = walks.find(w => w.id === id) || {};
+    l.setStyle({ color: colorOf(w), weight: sideWeight(w.side | 0) * (id === selected ? 1.5 : 1), opacity: editing && editing.id === id ? 0 : id === selected ? 0.95 : 0.72, lineCap: "round", lineJoin: "round" });
+  });
 }
 function renderWalks() {
   const ids = new Set(walks.map(w => w.id));
   walkLayers.forEach((l, id) => { if (!ids.has(id)) { l.remove(); walkLayers.delete(id); } });
   walks.forEach(w => {
     let l = walkLayers.get(w.id);
+    const lls = sideLLs(walkLines(w).map(flatToXY), w.side | 0);
     if (!l) {
-      l = L.polyline(walkLines(w).map(toLL), { renderer: baseR }).addTo(map);
-      l.on("click", () => { if (!drawing) select(w.id, false); });
+      l = L.polyline(lls, { renderer: baseR }).addTo(map);
+      l.on("click", () => { if (!drawing && !editing) select(w.id, false); });
       walkLayers.set(w.id, l);
-    } else l.setLatLngs(walkLines(w).map(toLL));
-    l.unbindTooltip().bindTooltip(`${w.date || ""} ${esc(w.note || "")}`.trim() || "路線", { sticky: true });
+    } else l.setLatLngs(lls);
+    const side = w.side ? `（${SIDE_TXT[w.side]}）` : "";
+    l.unbindTooltip().bindTooltip(`${w.date || ""} ${esc(w.note || "")}${side}`.trim() || "路線", { sticky: true });
   });
   styleWalks();
 }
 function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 
+// which sides of a street (unit direction ux,uy) are walked near px,py: bit 1 = its left, bit 2 = its right
+function sidesAt(g, segs, cell, px, py, maxD, ux, uy) {
+  let mask = 0; const r = Math.ceil(maxD / cell), cx = Math.floor(px / cell), cy = Math.floor(py / cell);
+  for (let x = cx - r; x <= cx + r; x++) for (let y = cy - r; y <= cy + r; y++) {
+    const ids = g.get(x + "," + y); if (!ids) continue;
+    for (const i of ids) {
+      const s = segs[i];
+      if (segDist(px, py, s[0], s[1], s[2], s[3])[0] > maxD) continue;
+      if (!s[4]) return 3;
+      // a one-side walk counts for the matching side only when it runs along this street
+      const l = Math.hypot(s[2] - s[0], s[3] - s[1]) || 1, dot = ((s[2] - s[0]) * ux + (s[3] - s[1]) * uy) / l;
+      if (Math.abs(dot) < 0.5) continue;
+      mask |= dot > 0 ? s[4] : 3 - s[4];
+      if (mask === 3) return 3;
+    }
+  }
+  return mask;
+}
+// share of street length walked: `both` counts each side as half a street, `one` counts any side
 function coverage() {
   const segs = [];
-  walks.forEach(w => walkLines(w).forEach(f => { for (let i = 2; i < f.length; i += 2) segs.push([mx(f[i - 1]), my(f[i - 2]), mx(f[i + 1]), my(f[i])]); }));
-  if (!segs.length) return 0;
-  const cell = 40, g = gridIndex(segs, cell); let cov = 0;
+  walks.forEach(w => walkLines(w).forEach(f => { for (let i = 2; i < f.length; i += 2) segs.push([mx(f[i - 1]), my(f[i - 2]), mx(f[i + 1]), my(f[i]), w.side | 0]); }));
+  if (!segs.length) return { both: 0, one: 0 };
+  const cell = 40, g = gridIndex(segs, cell); let one = 0, both = 0;
   COV_SEGS.forEach(s => {
-    const len = Math.hypot(s[2] - s[0], s[3] - s[1]), n = Math.max(1, Math.ceil(len / 20));
+    const dx = s[2] - s[0], dy = s[3] - s[1], len = Math.hypot(dx, dy), n = Math.max(1, Math.ceil(len / 20));
+    if (!len) return;
     for (let j = 0; j < n; j++) {
-      const t = (j + 0.5) / n;
-      if (nearest(g, segs, cell, s[0] + t * (s[2] - s[0]), s[1] + t * (s[3] - s[1]), 20)) cov += len / n;
+      const t = (j + 0.5) / n, m = sidesAt(g, segs, cell, s[0] + t * dx, s[1] + t * dy, 20, dx / len, dy / len);
+      if (m) one += len / n;
+      both += ((m & 1) + (m >> 1)) * len / n / 2;
     }
   });
-  return cov / COV_TOTAL;
+  return { both: both / COV_TOTAL, one: one / COV_TOTAL };
 }
 
 function renderPanel() {
   const km = walks.reduce((a, w) => a + walkLen(w), 0) / 1000;
   $("sKm").textContent = km.toFixed(1);
   const c = coverage();
-  $("covFill").style.width = (c * 100).toFixed(1) + "%";
-  $("covText").textContent = `住宅區・商業區街道覆蓋率 ${(c * 100).toFixed(1)}%（範圍內共約 ${(COV_TOTAL / 1000).toFixed(0)} 公里街道，不含農田區；20 公尺內有走過即算）`;
+  $("covFill").style.width = (c.both * 100).toFixed(1) + "%";
+  $("covOne").style.width = (c.one * 100).toFixed(1) + "%";
+  $("covText").textContent = `住宅區・商業區街道覆蓋率 ${(c.both * 100).toFixed(1)}%（左右兩側分開算，一側算一半）`;
+  $("covSub").textContent = `至少掃過一側：${(c.one * 100).toFixed(1)}%（淺色）。範圍內共約 ${(COV_TOTAL / 1000).toFixed(0)} 公里街道，不含農田區；20 公尺內有走過即算。`;
 
   const list = $("list");
   if (!walks.length) { list.innerHTML = '<div class="empty">還沒有路線。按「開始畫線」，在地圖上描出第一條走過的街道。</div>'; return; }
@@ -559,7 +659,7 @@ function renderPanel() {
     el.className = "item" + (w.id === selected ? " sel" : "");
     el.innerHTML = editing
       ? `<span class="dot"></span><div class="meta"><input type="text" id="noteEdit" maxlength="80" aria-label="備註"><span></span></div><div class="acts"><button class="link save" type="button" data-a="save">儲存</button><button class="link" type="button" data-a="cancel">取消</button></div>`
-      : `<span class="dot"></span><div class="meta"><b></b><span></span></div><div class="acts">${readOnly ? "" : '<button class="link" type="button" data-a="edit">改備註</button><button class="link" type="button" data-a="del">刪除</button>'}</div>`;
+      : `<span class="dot"></span><div class="meta"><b></b><span></span></div><div class="acts">${readOnly ? "" : '<button class="link" type="button" data-a="edit">改備註</button><button class="link" type="button" data-a="shape">改路線</button><button class="link" type="button" data-a="del">刪除</button>'}</div>`;
     el.querySelector(".dot").style.background = colorOf(w);
     if (editing) {
       const inp = el.querySelector("input");
@@ -567,13 +667,14 @@ function renderPanel() {
       inp.addEventListener("input", () => { editDraft = inp.value; });
       inp.addEventListener("keydown", e => { if (e.key === "Enter") saveNote(w.id); else if (e.key === "Escape") { editingId = null; renderPanel(); } });
     } else el.querySelector("b").textContent = w.note || "（未填備註）";
-    el.querySelector(".meta span").textContent = `${w.date || "—"} · ${(walkLen(w) / 1000).toFixed(2)} km`;
+    el.querySelector(".meta span").textContent = `${w.date || "—"} · ${(walkLen(w) / 1000).toFixed(2)} km${w.side ? " · " + SIDE_TXT[w.side] : ""}`;
     el.addEventListener("click", e => {
       if (e.target.closest("input")) return;
       const a = e.target.closest("[data-a]")?.dataset.a;
       if (a === "edit") { e.stopPropagation(); editingId = w.id; editDraft = w.note || ""; renderPanel(); const i = $("noteEdit"); if (i) { i.focus(); i.select(); } return; }
       if (a === "save") { e.stopPropagation(); saveNote(w.id); return; }
       if (a === "cancel") { e.stopPropagation(); editingId = null; renderPanel(); return; }
+      if (a === "shape") { e.stopPropagation(); startEdit(w.id); return; }
       if (a === "del") { e.stopPropagation(); askDelete(el, w); return; }
       if (a === "no") { e.stopPropagation(); renderPanel(); return; }
       if (a === "yes") { e.stopPropagation(); doDelete(w.id); return; }
@@ -656,25 +757,46 @@ COLORS.forEach((c, i) => {
 });
 try { const d = new Date(); $("fDate").value = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); } catch (e) {}
 
+let side = 0;
+const sideSeg = $("sideSeg");
+SIDE_TXT.forEach((t, i) => {
+  const b = document.createElement("button");
+  b.type = "button"; b.textContent = t; b.setAttribute("aria-pressed", i === side);
+  b.onclick = () => setSide(i);
+  sideSeg.appendChild(b);
+});
+function setSide(i) {
+  side = i;
+  sideSeg.querySelectorAll("button").forEach((x, j) => x.setAttribute("aria-pressed", j === i));
+  $("btnSide").textContent = SIDE_TXT[i]; $("btnSide").classList.toggle("on", i > 0);
+  if (draftLine) { styleDraft(); updateDraft(); }
+}
+$("btnSide").onclick = () => setSide((side + 1) % 3);
+
+// on phones the map sits above the panel: bring it into view before drawing or editing
+function showMap() {
+  const r = mapEl.getBoundingClientRect();
+  if (r.top < -4 || r.bottom > innerHeight + 4) mapEl.scrollIntoView({ behavior: "smooth", block: "start" });
+}
 function styleDraft() {
-  draftLine.setStyle({ color: T.walk[color], weight: walkWeight(), opacity: 0.9, lineCap: "round", lineJoin: "round" });
+  draftLine.setStyle({ color: T.walk[color], weight: sideWeight(side), opacity: 0.9, lineCap: "round", lineJoin: "round" });
   ghost.setStyle({ color: T.walk[color], weight: 2, dashArray: "6 6", opacity: 0.9 });
 }
 function startDraw() {
-  if (drawing) return;
-  drawing = true; wps = []; pieces = []; hideChip();
+  if (drawing || editing) return;
+  drawing = true; wps = []; pieces = []; hideChip(); showMap();
   draftLine = L.polyline([], { renderer: draftR, interactive: false }).addTo(map);
   ghost = L.polyline([], { renderer: draftR, interactive: false }).addTo(map);
   styleDraft();
   map.dragging.disable(); map.doubleClickZoom.disable(); map.boxZoom.disable();
-  $("map").classList.add("drawing"); $("drawbar").hidden = false; $("btnDraw").disabled = true;
+  $("map").classList.add("drawing"); $("drawbar").hidden = false; $("btnDraw").disabled = true; document.body.classList.add("busy");
   updateDraft();
 }
 function stopDraw() {
   drawing = false; pressed = false;
   draftLine && draftLine.remove(); ghost && ghost.remove(); draftLine = ghost = null;
   map.dragging.enable(); map.doubleClickZoom.enable(); map.boxZoom.enable();
-  $("map").classList.remove("drawing"); $("drawbar").hidden = true; $("btnDraw").disabled = false;
+  $("map").classList.remove("drawing"); $("drawbar").hidden = true; $("btnDraw").disabled = false; document.body.classList.remove("busy");
 }
 // the draft is a list of clicked waypoints; pieces[i] is the street path from waypoint i-1 to i
 function draftXY() {
@@ -692,7 +814,7 @@ function draftXY() {
 function draftFlat() { const f = []; draftXY().forEach(p => f.push(+(p[1] / KY).toFixed(6), +(p[0] / KX).toFixed(6))); return f; }
 function updateDraft() {
   const xy = draftXY();
-  draftLine.setLatLngs(xy.map(xyToLL));
+  draftLine.setLatLngs(sideLLs([xy], side)[0]);
   const m = lengthM(draftFlat());
   $("draftLen").textContent = m < 1000 ? `${m.toFixed(0)} m` : `${(m / 1000).toFixed(2)} km`;
   $("btnFinish").disabled = xy.length < 2; $("btnUndo").disabled = !wps.length;
@@ -759,6 +881,7 @@ async function finish() {
   const n = draftXY().length;
   if (saving || n < 2) { if (n < 2) toast("至少要點兩個點才能成為一條線"); return; }
   const doc = { pts: draftFlat(), date: $("fDate").value || "", note: $("fNote").value.trim(), color, createdAt: Date.now() };
+  if (side) doc.side = side;
   if (!col) { toast("目前沒有連上共用資料庫，這條線無法儲存。請登入 Claude 後再開啟此頁。"); return; }
   saving = true; $("btnFinish").disabled = true;
   try { await col.add(doc); stopDraw(); toast("已儲存，所有人都看得到這條路線"); }
@@ -766,8 +889,167 @@ async function finish() {
   finally { saving = false; }
 }
 
+$("fabDraw").onclick = startDraw;
+
+// ---------- editing a saved route: drag its ends to trim or extend, or cut a piece out ----------
+// editing = { id, lines: [[[x,y]...]...], side, hist, cutting, cutA }
+let editLayer = null, handles = [], cutMark = null, dragQueued = false;
+// closest spot on a line: { d, i, q, s } (q lies on segment i-1→i, s = distance from the start)
+function project(line, px, py) {
+  let best = null, s = 0;
+  for (let i = 1; i < line.length; i++) {
+    const a = line[i - 1], b = line[i], r = segDist(px, py, a[0], a[1], b[0], b[1]);
+    if (!best || r[0] < best.d) best = { d: r[0], i, q: [r[1], r[2]], s: s + Math.hypot(r[1] - a[0], r[2] - a[1]) };
+    s += Math.hypot(b[0] - a[0], b[1] - a[1]);
+  }
+  return best;
+}
+const upTo = (line, p) => [...line.slice(0, p.i), p.q];
+const fromP = (line, p) => [p.q, ...line.slice(p.i)];
+const lineM = line => { let s = 0; for (let i = 1; i < line.length; i++) s += Math.hypot(line[i][0] - line[i - 1][0], line[i][1] - line[i - 1][1]); return s; };
+function tidy(line) { const out = []; line.forEach(p => { const l = out[out.length - 1]; if (!l || Math.hypot(p[0] - l[0], p[1] - l[1]) > 0.3) out.push(p); }); return out; }
+const editTol = () => Math.max(8, 16 * metersPerPixel());
+// new shape of `line` when its last point is dragged to ll
+function dragTail(line, ll) {
+  const px = mx(ll.lng), py = my(ll.lat), p = project(line, px, py);
+  if (p && p.d <= editTol()) return upTo(line, p); // back onto the line: shorten
+  const end = line[line.length - 1], follow = $("fSnap").checked;
+  const a = follow ? snapPt(xyToLL(end)) : null, b = follow ? snapPt(ll) : null, r = a && b ? route(a, b) : null;
+  return line.concat(r ? r.slice(1) : [[b ? b.x : px, b ? b.y : py]]);
+}
+function dragResult(li, atStart, ll) {
+  const lines = editing.lines.map(l => l.slice());
+  let l = atStart ? lines[li].slice().reverse() : lines[li];
+  l = tidy(dragTail(l, ll));
+  if (atStart) l.reverse();
+  if (l.length < 2 || lineM(l) < 3) lines.splice(li, 1); else lines[li] = l;
+  return lines;
+}
+function startEdit(id) {
+  if (drawing || editing || !col) return;
+  const w = walks.find(w => w.id === id); if (!w) return;
+  editingId = null;
+  editing = { id, lines: walkLines(w).map(flatToXY), side: w.side | 0, hist: [], cutting: false, cutA: null };
+  selected = id; hideChip(); showMap();
+  editLayer = L.polyline([], { renderer: draftR, interactive: false }).addTo(map);
+  map.doubleClickZoom.disable();
+  $("editbar").hidden = false; $("btnDraw").disabled = true; document.body.classList.add("busy");
+  const l = walkLayers.get(id); if (l) map.fitBounds(l.getBounds(), { padding: [70, 70], maxZoom: 18 });
+  styleWalks(); renderPanel(); renderEdit();
+}
+function stopEdit() {
+  if (!editing) return;
+  editing = null;
+  editLayer && editLayer.remove(); editLayer = null;
+  handles.forEach(h => h.remove()); handles = [];
+  cutMark && cutMark.remove(); cutMark = null;
+  map.doubleClickZoom.enable();
+  $("editbar").hidden = true; $("btnDraw").disabled = false; document.body.classList.remove("busy");
+  styleWalks(); renderPanel();
+}
+function editStyle() {
+  const w = walks.find(w => w.id === editing.id) || {};
+  editLayer.setStyle({ color: colorOf(w), weight: sideWeight(editing.side), opacity: 0.95, lineCap: "round", lineJoin: "round" });
+}
+function showEditLines(lines) {
+  editLayer.setLatLngs(sideLLs(lines, editing.side));
+  const m = lines.reduce((a, l) => a + lineM(l), 0);
+  $("editLen").textContent = m < 1000 ? `${m.toFixed(0)} m` : `${(m / 1000).toFixed(2)} km`;
+}
+function renderEdit() {
+  editStyle(); showEditLines(editing.lines);
+  $("btnESide").textContent = SIDE_TXT[editing.side]; $("btnESide").classList.toggle("on", editing.side > 0);
+  $("btnCut").classList.toggle("on", editing.cutting); $("btnEUndo").disabled = !editing.hist.length;
+  $("editHint").textContent = editing.cutting
+    ? (editing.cutA ? "再點一下線上另一個位置，中間那段就會剪掉" : "在線上點要剪掉那段的起點")
+    : "拖曳兩端的圓點：拖回線上＝縮短，往外拖＝沿著路延長";
+  handles.forEach(h => h.remove()); handles = [];
+  const size = matchMedia("(pointer: coarse)").matches ? 34 : 24;
+  editing.lines.forEach((l, li) => [true, false].forEach(atStart => {
+    const h = L.marker(xyToLL(atStart ? l[0] : l[l.length - 1]), { draggable: true, keyboard: false, zIndexOffset: 1000,
+      icon: L.divIcon({ className: "handle", iconSize: [size, size] }) }).addTo(map);
+    h.on("drag", e => {
+      if (dragQueued) return; dragQueued = true;
+      requestAnimationFrame(() => { dragQueued = false; if (editing) showEditLines(dragResult(li, atStart, e.target.getLatLng())); });
+    });
+    h.on("dragend", e => {
+      const next = dragResult(li, atStart, e.target.getLatLng());
+      if (!next.length) toast("至少要留一段。整條不要的話，請用清單的「刪除」。");
+      else { if (next.length < editing.lines.length) toast("已移除這一小段"); pushEdit(next); }
+      renderEdit();
+    });
+    handles.push(h);
+  }));
+}
+function pushEdit(lines) { editing.hist.push(editing.lines); editing.lines = lines; }
+function cutAt(ll) {
+  const px = mx(ll.lng), py = my(ll.lat);
+  let hit = null;
+  editing.lines.forEach((l, li) => { const p = project(l, px, py); if (p && (!hit || p.d < hit.p.d)) hit = { li, p }; });
+  if (!hit || hit.p.d > editTol() * 1.5) { toast("請點在線上"); return; }
+  if (!editing.cutA || editing.cutA.li !== hit.li) {
+    editing.cutA = hit;
+    cutMark && cutMark.remove();
+    cutMark = L.marker(xyToLL(hit.p.q), { interactive: false, icon: L.divIcon({ className: "cutmark", iconSize: [16, 16] }) }).addTo(map);
+    renderEdit(); return;
+  }
+  let [a, b] = [editing.cutA.p, hit.p]; if (a.s > b.s) [a, b] = [b, a];
+  const line = editing.lines[hit.li], keep = [tidy(upTo(line, a)), tidy(fromP(line, b))].filter(l => l.length >= 2 && lineM(l) >= 3);
+  const lines = editing.lines.slice(); lines.splice(hit.li, 1, ...keep);
+  editing.cutA = null; editing.cutting = false; cutMark && cutMark.remove(); cutMark = null;
+  if (!lines.length) toast("至少要留一段。整條不要的話，請用清單的「刪除」。");
+  else { pushEdit(lines); toast(`已剪掉約 ${Math.round(b.s - a.s)} 公尺`); }
+  renderEdit();
+}
+map.on("click", e => { if (editing && editing.cutting) cutAt(e.latlng); });
+$("btnCut").onclick = () => { editing.cutting = !editing.cutting; editing.cutA = null; cutMark && cutMark.remove(); cutMark = null; renderEdit(); };
+$("btnESide").onclick = () => { editing.side = (editing.side + 1) % 3; renderEdit(); };
+$("btnEUndo").onclick = () => { if (editing.hist.length) { editing.lines = editing.hist.pop(); renderEdit(); } };
+$("btnECancel").onclick = stopEdit;
+let savingEdit = false;
+$("btnESave").onclick = async () => {
+  if (savingEdit || !editing) return;
+  const pts = [], breaks = [];
+  editing.lines.forEach((l, k) => { if (k) breaks.push(pts.length / 2); l.forEach(p => pts.push(+(p[1] / KY).toFixed(6), +(p[0] / KX).toFixed(6))); });
+  savingEdit = true; $("btnESave").disabled = true;
+  try { await col.doc(editing.id).update({ pts, breaks, side: editing.side }); stopEdit(); toast("路線已更新"); }
+  catch (e) { toast(writeErr(e)); }
+  finally { savingEdit = false; $("btnESave").disabled = false; }
+};
+document.addEventListener("keydown", e => { if (editing && e.key === "Escape") stopEdit(); });
+
+// ---------- my location (for drawing while out on the street) ----------
+let meDot = null, meRing = null, locating = false, firstFix = false;
+const Locate = L.Control.extend({
+  options: { position: "topleft" },
+  onAdd() {
+    const box = L.DomUtil.create("div", "leaflet-bar locate"), a = L.DomUtil.create("a", "", box);
+    a.href = "#"; a.textContent = "◎"; a.title = "顯示我的位置"; a.setAttribute("role", "button"); a.setAttribute("aria-label", "顯示我的位置");
+    L.DomEvent.disableClickPropagation(box);
+    L.DomEvent.on(a, "click", e => {
+      L.DomEvent.preventDefault(e);
+      if (locating) { map.stopLocate(); locating = false; a.classList.remove("on"); meDot && meDot.remove(); meRing && meRing.remove(); meDot = meRing = null; return; }
+      locating = true; firstFix = true; a.classList.add("on");
+      map.locate({ watch: true, enableHighAccuracy: true, setView: false });
+    });
+    this._a = a; return box;
+  }
+});
+const locateCtl = new Locate().addTo(map);
+map.on("locationfound", e => {
+  if (!meDot) {
+    meRing = L.circle(e.latlng, { radius: e.accuracy, renderer: draftR, interactive: false, color: "#1a73e8", weight: 1, fillOpacity: 0.12 }).addTo(map);
+    meDot = L.marker(e.latlng, { interactive: false, keyboard: false, icon: L.divIcon({ className: "me-dot", iconSize: [18, 18] }) }).addTo(map);
+  } else { meDot.setLatLng(e.latlng); meRing.setLatLng(e.latlng).setRadius(e.accuracy); }
+  if (firstFix) { firstFix = false; map.setView(e.latlng, Math.max(map.getZoom(), 17)); }
+});
+map.on("locationerror", () => {
+  locating = false; locateCtl._a.classList.remove("on");
+  toast("無法取得位置，請確認瀏覽器已允許使用定位。");
+});
+
 // ---------- theme changes ----------
-function retheme() { styleZone(); readTokens(); styleBase(); styleWalks(); renderPanel(); drawLabels(); if (draftLine) styleDraft(); }
+function retheme() { styleZone(); readTokens(); styleBase(); styleWalks(); renderPanel(); drawLabels(); if (draftLine) styleDraft(); if (editing) editStyle(); }
 try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", retheme); } catch (e) {}
 new MutationObserver(retheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
