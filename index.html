@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style></head><body><title>宜蘭市掃街地圖</title>
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style><script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script><script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script><script>window.FIREBASE_CONFIG={"apiKey":"AIzaSyAiRQXmwsTuXD_LoNoyhauLWF0tBfcfhco","authDomain":"yilan-street-map.firebaseapp.com","projectId":"yilan-street-map","storageBucket":"yilan-street-map.firebasestorage.app","messagingSenderId":"569088380898","appId":"1:569088380898:web:2a99f8eebf46309f1bf3bb"};</script></head><body><title>宜蘭市掃街地圖</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -166,6 +166,7 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); ou
       <span class="eyebrow">宜蘭縣 · 宜蘭市 徒步掃街紀錄</span>
       <h1>宜蘭市掃街地圖</h1>
       <p>畫上走過的路線，團隊打開同一個網址就能看到最新進度。</p>
+      <p id="movedNote" hidden style="color:var(--accent);font-weight:700">地圖已搬家：請改用 <a href="https://hanyingyilan.github.io/yilan-street-map/" target="_blank" rel="noopener" style="color:inherit">hanyingyilan.github.io/yilan-street-map</a>，不用登入就能畫線。這裡的資料不再更新。</p>
     </div>
 
     <div class="stats">
@@ -204,6 +205,7 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); ou
         <span class="status" id="status">連線中…</span>
       </div>
       <div class="list" id="list"><div class="empty">還沒有路線。按「開始畫線」，在地圖上描出第一條走過的街道。</div></div>
+      <div id="trash" class="list" hidden></div>
     </div>
   </aside>
 </div>
@@ -594,10 +596,36 @@ async function saveNote(id) {
 function askDelete(el, w) {
   el.querySelector(".acts").innerHTML = '<button class="link danger" type="button" data-a="yes">確定刪除</button><button class="link" type="button" data-a="no">取消</button>';
 }
+// on the open (no sign-in) site a delete only moves the route to the recycle bin, so it can be restored
+let softDelete = false, trash = [], showTrash = false;
 async function doDelete(id) {
   if (!col) return;
-  try { await col.doc(id).delete(); if (selected === id) selected = null; toast("已刪除路線"); }
-  catch (e) { toast(writeErr(e)); }
+  try {
+    if (softDelete) { await col.doc(id).update({ deleted: true, deletedAt: Date.now() }); toast("已移到回收區，可以從清單下方還原"); }
+    else { await col.doc(id).delete(); toast("已刪除路線"); }
+    if (selected === id) selected = null;
+  } catch (e) { toast(writeErr(e)); }
+}
+async function restore(id) {
+  try { await col.doc(id).update({ deleted: false }); toast("已還原路線"); } catch (e) { toast(writeErr(e)); }
+}
+function renderTrash() {
+  const box = $("trash");
+  if (!softDelete || !trash.length) { box.hidden = true; return; }
+  box.hidden = false;
+  box.innerHTML = `<button class="link" type="button" id="trashToggle">${showTrash ? "收起" : "查看"}回收區（${trash.length}）</button>`;
+  $("trashToggle").onclick = () => { showTrash = !showTrash; renderTrash(); };
+  if (!showTrash) return;
+  trash.forEach(w => {
+    const el = document.createElement("div");
+    el.className = "item";
+    el.innerHTML = `<span class="dot"></span><div class="meta"><b></b><span></span></div><div class="acts"><button class="link save" type="button">還原</button></div>`;
+    el.querySelector(".dot").style.background = colorOf(w);
+    el.querySelector("b").textContent = w.note || "（未填備註）";
+    el.querySelector(".meta span").textContent = `${w.date || "—"} · ${(walkLen(w) / 1000).toFixed(2)} km`;
+    el.querySelector("button").onclick = () => restore(w.id);
+    box.appendChild(el);
+  });
 }
 function select(id, fly) {
   selected = selected === id && !fly ? null : id;
@@ -611,6 +639,7 @@ function writeErr(e) {
   if (c === "quota_exceeded") return "資料空間已滿，請先刪除一些舊路線再儲存。";
   if (c === "resource_exhausted") return "操作太頻繁，請稍等幾秒再試。";
   if (c === "not_granted" || c === "revoked" || c === "invalid_argument") return "你目前只有檢視權限，無法儲存。請向擁有者索取編輯權限。";
+  if (c === "permission-denied") return "這筆資料無法儲存（備註太長或路線太長），請縮短後再試。";
   return "儲存失敗，請檢查網路後再試一次。";
 }
 
@@ -761,16 +790,33 @@ async function loadSnapshot() {
 // ---------- shared store ----------
 function setStatus(s, text) { const el = $("status"); el.dataset.s = s; el.textContent = text; }
 renderPanel();
-(async () => {
-  const db = window.claude && window.claude.use ? await window.claude.use("db") : null;
-  if (!db) { setStatus("err", "未連線，只能瀏覽"); $("btnDraw").title = "需要登入才能儲存路線"; loadSnapshot(); return; }
-  col = db.collection("walks");
+function subscribe() {
   col.onSnapshot(snap => {
-    walks = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(w => Array.isArray(w.pts) && w.pts.length >= 4 && w.pts.length % 2 === 0);
+    const all = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(w => Array.isArray(w.pts) && w.pts.length >= 4 && w.pts.length % 2 === 0);
+    walks = all.filter(w => !w.deleted);
+    trash = all.filter(w => w.deleted).sort((a, b) => (b.deletedAt || 0) - (a.deletedAt || 0));
+    renderTrash();
     if (selected && !walks.some(w => w.id === selected)) selected = null;
     renderWalks(); renderPanel();
     setStatus("ok", snap.metadata.fromCache ? "同步中…" : "已同步");
   }, () => setStatus("err", "連線中斷，請重新整理"));
+}
+(async () => {
+  // GitHub Pages build: shared Firebase database, anyone with the link can draw
+  if (window.FIREBASE_CONFIG && window.firebase) {
+    try {
+      firebase.initializeApp(window.FIREBASE_CONFIG);
+      col = firebase.firestore().collection("walks");
+      softDelete = true;
+      subscribe();
+    } catch (e) { setStatus("err", "連不上資料庫，請重新整理"); }
+    return;
+  }
+  if (window.claude) $("movedNote").hidden = false;
+  const db = window.claude && window.claude.use ? await window.claude.use("db") : null;
+  if (!db) { setStatus("err", "未連線，只能瀏覽"); $("btnDraw").title = "需要登入才能儲存路線"; loadSnapshot(); return; }
+  col = db.collection("walks");
+  subscribe();
 })();
 </script>
 </body></html>
