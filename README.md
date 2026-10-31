@@ -22,3 +22,19 @@
 - `routes.json`：2026-10-27 的路線備份（搬到 Firebase 前的資料）。
 
 道路與地標資料 © OpenStreetMap contributors（ODbL）。
+
+## 用打字新增路線（AI）
+
+網頁把文字送到 Cloudflare Worker（`worker/worker.js`），Worker 呼叫 Claude 整理成步驟，網頁再畫到街道上，成為草稿，由隊員確認後才存入。
+
+金鑰只放在 Worker 的環境變數，不會放進這個 repository：
+
+| 名稱 | 種類 | 說明 |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | Secret，必填 | Claude API 金鑰 |
+| `TEAM_PASSWORD` | Secret，必填 | 團隊密碼 |
+| `GOOGLE_MAPS_KEY` | Secret，選填 | 查店家位置（Places API）；沒有的話，網頁會請隊員在地圖上點 |
+| `DAILY_LIMIT` | 變數，選填 | 每日次數上限，預設 30 |
+| `USAGE` | KV 綁定，建議 | 記錄每日次數；沒綁定就不會限制次數 |
+
+設定好後，把 Worker 網址寫進 `index.html` 開頭的 `window.ROUTE_AI_URL`，對話框才會出現。

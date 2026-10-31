@@ -95,7 +95,7 @@ body { background: var(--panel); color: var(--ink); font-family: var(--font-body
 .field { display: flex; flex-direction: column; gap: 5px; }
 .field label, .field .lbl { font-size: 12px; color: var(--muted); font-weight: 500; }
 .row2 { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 10px; }
-input[type="date"], input[type="text"] { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; min-width: 0; width: 100%; box-sizing: border-box; }
+input[type="date"], input[type="text"], input[type="password"], textarea { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; min-width: 0; width: 100%; box-sizing: border-box; }
 input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .swatches { display: flex; gap: 8px; flex-wrap: wrap; }
 .sw { width: 30px; height: 30px; border-radius: 50%; border: 3px solid var(--panel); box-shadow: 0 0 0 1px var(--line); cursor: pointer; padding: 0; }
@@ -153,6 +153,9 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); ou
 .covbar { position: relative; }
 .covbar i { position: absolute; left: 0; top: 0; }
 .covbar i.one { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+textarea { resize: vertical; line-height: 1.6; }
+.aiwarn { margin: 0; padding-left: 18px; font-size: 12.5px; line-height: 1.7; color: var(--danger); }
+.aibox { display: flex; flex-direction: column; gap: 10px; }
 .fab { display: none; }
 .hint-touch { display: none; }
 @media (pointer: coarse) {
@@ -199,6 +202,10 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); ou
       <button class="btn" id="btnECancel" type="button">取消</button>
       <button class="btn primary" id="btnESave" type="button">儲存變更</button>
     </div>
+    <div class="drawbar" id="pickbar" hidden>
+      <p class="barhint" id="pickText"></p>
+      <button class="btn" id="btnPickCancel" type="button">取消</button>
+    </div>
     <button class="btn primary fab" id="fabDraw" type="button">＋ 畫走過的路</button>
   </div>
 
@@ -223,6 +230,24 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); ou
     <div class="section">
       <span class="eyebrow">地圖圖例（放大後顯示更多路名與地標）</span>
       <div class="legend" id="legend"></div>
+    </div>
+
+    <div class="section" id="aiBox" hidden>
+      <span class="eyebrow">用打字新增路線</span>
+      <div class="field">
+        <label for="aiText">今天走了哪些路（路名、在哪裡轉彎或回轉）</label>
+        <textarea id="aiText" rows="5" maxlength="3000" placeholder="例：北津公園停車場集合 → 中山路五段 → 九龍輪胎前回轉 → 中山路五段 → 右轉大坡路一段"></textarea>
+      </div>
+      <div class="field" id="aiPassRow" hidden><label for="aiPass">團隊密碼</label><input type="password" id="aiPass" autocomplete="off"></div>
+      <button class="btn primary" id="btnAi" type="button">讓 AI 畫出來</button>
+      <div class="aibox" id="aiResult" hidden>
+        <ul class="aiwarn" id="aiWarn" hidden></ul>
+        <div class="row2">
+          <div class="field"><label for="aiDate">日期</label><input type="date" id="aiDate"></div>
+          <div class="field"><label for="aiNote">備註</label><input type="text" id="aiNote" maxlength="80"></div>
+        </div>
+        <p class="hint">這是草稿，還沒有存。請看地圖上的線對不對，可以拖兩端修改，再按「確認並儲存」。顏色跟著下方選的線條顏色。</p>
+      </div>
     </div>
 
     <div class="section">
@@ -482,6 +507,11 @@ function nearest(g, segs, cell, px, py, maxD) {
 // dense residential/commercial zone: 100 m cells precomputed from street, alley and building density
 const ZONE_CELL = 100, ZONE = new Set(DATA.z.map(([i, j]) => i + "," + j));
 // street network: nodes shared between roads become intersections; segments keep their two node ids
+const zhNum = s => { const d = "一二三四五六七八九"; let n = 0, c = 0; for (const ch of s) { const i = d.indexOf(ch) + 1; if (i) c = i; else { n += (c || 1) * (ch === "十" ? 10 : 100); c = 0; } } return n + c; };
+// 「北津路五巷」and「北津路5巷」are the same lane
+const normName = s => String(s).normalize("NFKC").replace(/\s/g, "").replace(/^(宜蘭縣)?(宜蘭市)?/, "").replace(/[一二三四五六七八九十百]+(?=[巷弄])/g, zhNum);
+const edgeKey = (a, b) => a < b ? a * 1e6 + b : b * 1e6 + a;
+const EDGE_NAMES = new Map(), NAME_NODES = new Map(), NODE_SEG = [];
 const ROAD_SEGS = [], COV_SEGS = [], NODE = new Map(), NX = [], NY = [], ADJ = [];
 function nodeId(lat, lng) {
   const k = lat + "," + lng; let id = NODE.get(k);
@@ -489,14 +519,18 @@ function nodeId(lat, lng) {
   return id;
 }
 DATA.r.forEach(r => {
-  const f = r[2]; let prev = -1;
+  const f = r[2], names = r[1] ? r[1].split("/").map(normName) : []; let prev = -1;
   for (let i = 0; i < f.length; i += 2) {
     const n = nodeId(f[i], f[i + 1]);
+    names.forEach(m => (NAME_NODES.get(m) || NAME_NODES.set(m, new Set()).get(m)).add(n));
     if (prev >= 0 && prev !== n) {
       const w = Math.hypot(NX[n] - NX[prev], NY[n] - NY[prev]);
       ADJ[prev].push(n, w); ADJ[n].push(prev, w);
       const s = [NX[prev], NY[prev], NX[n], NY[n], prev, n];
       ROAD_SEGS.push(s);
+      NODE_SEG[prev] = NODE_SEG[n] = ROAD_SEGS.length - 1;
+      const key = edgeKey(prev, n), en = EDGE_NAMES.get(key) || EDGE_NAMES.set(key, new Set()).get(key);
+      names.forEach(m => en.add(m));
       // coverage only counts streets inside the dense residential/commercial zone (farm tracks and unnamed lanes excluded)
       if ((r[0] <= 3 || r[1]) && ZONE.has(Math.floor((s[0] + s[2]) / 2 / ZONE_CELL) + "," + Math.floor((s[1] + s[3]) / 2 / ZONE_CELL))) COV_SEGS.push(s);
     }
@@ -752,7 +786,7 @@ COLORS.forEach((c, i) => {
   const b = document.createElement("button");
   b.type = "button"; b.className = "sw"; b.id = "sw" + i; b.style.background = `var(${c})`;
   b.setAttribute("aria-label", "顏色 " + (i + 1)); b.setAttribute("aria-pressed", i === color);
-  b.onclick = () => { color = i; sw.querySelectorAll(".sw").forEach((x, j) => x.setAttribute("aria-pressed", j === i)); if (draftLine) styleDraft(); };
+  b.onclick = () => { color = i; sw.querySelectorAll(".sw").forEach((x, j) => x.setAttribute("aria-pressed", j === i)); if (draftLine) styleDraft(); if (editing) editStyle(); };
   sw.appendChild(b);
 });
 try { const d = new Date(); $("fDate").value = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); } catch (e) {}
@@ -929,13 +963,24 @@ function startEdit(id) {
   if (drawing || editing || !col) return;
   const w = walks.find(w => w.id === id); if (!w) return;
   editingId = null;
-  editing = { id, lines: walkLines(w).map(flatToXY), side: w.side | 0, hist: [], cutting: false, cutA: null };
-  selected = id; hideChip(); showMap();
+  selected = id;
+  openEditor({ id, lines: walkLines(w).map(flatToXY), side: w.side | 0 }, "儲存變更");
+}
+// a typed route opens here as an unsaved draft: id is null until the walker confirms it
+function startDraft(lines, draftSide) {
+  if (drawing || editing || !col) return;
+  selected = null;
+  openEditor({ id: null, lines, side: draftSide }, "確認並儲存");
+}
+function openEditor(state, saveLabel) {
+  editing = { ...state, hist: [], cutting: false, cutA: null };
+  hideChip(); showMap();
   editLayer = L.polyline([], { renderer: draftR, interactive: false }).addTo(map);
   map.doubleClickZoom.disable();
+  $("btnESave").textContent = saveLabel;
   $("editbar").hidden = false; $("btnDraw").disabled = true; document.body.classList.add("busy");
-  const l = walkLayers.get(id); if (l) map.fitBounds(l.getBounds(), { padding: [70, 70], maxZoom: 18 });
   styleWalks(); renderPanel(); renderEdit();
+  map.fitBounds(editLayer.getBounds(), { padding: [70, 70], maxZoom: 18 });
 }
 function stopEdit() {
   if (!editing) return;
@@ -948,7 +993,7 @@ function stopEdit() {
   styleWalks(); renderPanel();
 }
 function editStyle() {
-  const w = walks.find(w => w.id === editing.id) || {};
+  const w = editing.id ? walks.find(w => w.id === editing.id) || {} : { color };
   editLayer.setStyle({ color: colorOf(w), weight: sideWeight(editing.side), opacity: 0.95, lineCap: "round", lineJoin: "round" });
 }
 function showEditLines(lines) {
@@ -962,7 +1007,7 @@ function renderEdit() {
   $("btnCut").classList.toggle("on", editing.cutting); $("btnEUndo").disabled = !editing.hist.length;
   $("editHint").textContent = editing.cutting
     ? (editing.cutA ? "再點一下線上另一個位置，中間那段就會剪掉" : "在線上點要剪掉那段的起點")
-    : "拖曳兩端的圓點：拖回線上＝縮短，往外拖＝沿著路延長";
+    : (editing.id ? "" : $("aiWarn").children.length ? `AI 有 ${$("aiWarn").children.length} 點要確認，請看地圖下方。` : "這是草稿，還沒存。") + "拖曳兩端的圓點：拖回線上＝縮短，往外拖＝沿著路延長";
   handles.forEach(h => h.remove()); handles = [];
   const size = matchMedia("(pointer: coarse)").matches ? 34 : 24;
   editing.lines.forEach((l, li) => [true, false].forEach(atStart => {
@@ -1005,18 +1050,219 @@ map.on("click", e => { if (editing && editing.cutting) cutAt(e.latlng); });
 $("btnCut").onclick = () => { editing.cutting = !editing.cutting; editing.cutA = null; cutMark && cutMark.remove(); cutMark = null; renderEdit(); };
 $("btnESide").onclick = () => { editing.side = (editing.side + 1) % 3; renderEdit(); };
 $("btnEUndo").onclick = () => { if (editing.hist.length) { editing.lines = editing.hist.pop(); renderEdit(); } };
-$("btnECancel").onclick = stopEdit;
+$("btnECancel").onclick = () => { const draft = editing && !editing.id; stopEdit(); if (draft) $("aiResult").hidden = true; };
 let savingEdit = false;
 $("btnESave").onclick = async () => {
   if (savingEdit || !editing) return;
   const pts = [], breaks = [];
   editing.lines.forEach((l, k) => { if (k) breaks.push(pts.length / 2); l.forEach(p => pts.push(+(p[1] / KY).toFixed(6), +(p[0] / KX).toFixed(6))); });
   savingEdit = true; $("btnESave").disabled = true;
-  try { await col.doc(editing.id).update({ pts, breaks, side: editing.side }); stopEdit(); toast("路線已更新"); }
+  try {
+    if (editing.id) { await col.doc(editing.id).update({ pts, breaks, side: editing.side }); stopEdit(); toast("路線已更新"); }
+    else {
+      const doc = { pts, date: $("aiDate").value || "", note: $("aiNote").value.trim(), color, createdAt: Date.now() };
+      if (breaks.length) doc.breaks = breaks;
+      if (editing.side) doc.side = editing.side;
+      await col.add(doc); stopEdit(); clearAi(); toast("已儲存，所有人都看得到這條路線");
+    }
+  }
   catch (e) { toast(writeErr(e)); }
   finally { savingEdit = false; $("btnESave").disabled = false; }
 };
 document.addEventListener("keydown", e => { if (editing && e.key === "Escape") stopEdit(); });
+
+// ---------- typed routes: the AI worker turns text into steps, this code lays them on the street graph ----------
+function roadNames(name) {
+  const q = normName(name);
+  if (NAME_NODES.has(q)) return new Set([q]);
+  const out = new Set(); // 「大坡路」also means 大坡路一段 and 二段, but never its lanes
+  NAME_NODES.forEach((_, n) => { if (n.startsWith(q) && !/[巷弄]/.test(n.slice(q.length))) out.add(n); });
+  return out;
+}
+const nodesOf = names => { const out = new Set(); names.forEach(n => NAME_NODES.get(n).forEach(id => out.add(id))); return out; };
+const onRoad = (a, b, names) => { const en = EDGE_NAMES.get(edgeKey(a, b)); if (en) for (const n of en) if (names.has(n)) return true; return false; };
+const nodeSpot = n => ({ x: NX[n], y: NY[n], si: NODE_SEG[n] });
+// nearest spot on the named road (any street when names is null), skipping edges in `skip`
+function snapOnRoad(x, y, names, skip) {
+  let best = null;
+  ROAD_SEGS.forEach((s, si) => {
+    if (names && !onRoad(s[4], s[5], names)) return;
+    if (skip && skip.has(edgeKey(s[4], s[5]))) return;
+    const r = segDist(x, y, s[0], s[1], s[2], s[3]);
+    if (!best || r[0] < best.d) best = { x: r[1], y: r[2], si, d: r[0] };
+  });
+  return best;
+}
+// walk from spot P to a goal (a spot, or { nodes }) staying on the named road where possible
+function routeNamed(P, goal, names) {
+  if (goal.si !== undefined && P.si === goal.si) return { path: [[P.x, P.y], [goal.x, goal.y]], nodes: [], end: goal };
+  const A = ROAD_SEGS[P.si], tgt = new Map();
+  if (goal.nodes) goal.nodes.forEach(n => tgt.set(n, 0));
+  else { const B = ROAD_SEGS[goal.si]; tgt.set(B[4], Math.hypot(goal.x - B[0], goal.y - B[1])); tgt.set(B[5], Math.hypot(goal.x - B[2], goal.y - B[3])); }
+  const dist = new Map(), prev = new Map(), heap = new Heap(), done = new Set();
+  [[A[4], A[0], A[1]], [A[5], A[2], A[3]]].forEach(([n, x, y]) => { const d = Math.hypot(P.x - x, P.y - y); if (d < (dist.get(n) ?? Infinity)) { dist.set(n, d); prev.set(n, -1); heap.push(d, n); } });
+  let best = Infinity, bestN = -1;
+  while (heap.a.length) {
+    const [du, u] = heap.pop();
+    if (done.has(u)) continue; done.add(u);
+    if (du >= best) break;
+    const t = tgt.get(u); if (t !== undefined && du + t < best) { best = du + t; bestN = u; }
+    const adj = ADJ[u];
+    for (let i = 0; i < adj.length; i += 2) {
+      const v = adj[i], nd = du + adj[i + 1] * (onRoad(u, v, names) ? 1 : 8); // leaving the named road costs far more
+      if (nd < (dist.get(v) ?? Infinity)) { dist.set(v, nd); prev.set(v, u); heap.push(nd, v); }
+    }
+  }
+  if (bestN < 0) return null;
+  const nodes = []; for (let u = bestN; u !== -1; u = prev.get(u)) nodes.unshift(u);
+  const path = [[P.x, P.y], ...nodes.map(n => [NX[n], NY[n]])];
+  if (!goal.nodes) path.push([goal.x, goal.y]);
+  return { path, nodes, end: goal.nodes ? nodeSpot(bestN) : goal };
+}
+// where two roads meet: shared nodes, or the closest nodes when the map data leaves a small gap
+function junction(N, S) {
+  const a = nodesOf(N), b = nodesOf(S), shared = new Set([...a].filter(n => b.has(n)));
+  if (shared.size) return { nodes: shared, gap: 0 };
+  let min = Infinity; const near = new Map();
+  a.forEach(i => b.forEach(j => { const d = Math.hypot(NX[i] - NX[j], NY[i] - NY[j]); if (d < (near.get(i) ?? Infinity)) near.set(i, d); if (d < min) min = d; }));
+  return { nodes: new Set([...near].filter(([, d]) => d <= min + 5).map(([i]) => i)), gap: min };
+}
+const isTurn = st => st.action === "turn_left" || st.action === "turn_right";
+const placeXY = c => [mx(c.lng), my(c.lat)];
+// a turn place doesn't need a position when the crossing itself gives it
+function placesNeeded(steps, coords) {
+  const need = [];
+  steps.forEach((st, i) => {
+    if (st.kind !== "place" || coords[st.name] || need.includes(st.name) || st.action === "go") return;
+    const after = steps[i + 1], before = steps[i - 1];
+    if (isTurn(st) && after && after.kind === "road" && before && before.kind === "road") return;
+    need.push(st.name);
+  });
+  return need;
+}
+function buildRoute(steps, coords) {
+  const warn = [], path = [], walked = new Set();
+  let cur = null;
+  const add = pts => pts.forEach(p => { const l = path[path.length - 1]; if (!l || Math.hypot(p[0] - l[0], p[1] - l[1]) > 0.5) path.push(p); });
+  const leg = (goal, names) => {
+    const r = routeNamed(cur, goal, names);
+    if (!r) { warn.push("有一段路接不起來，請檢查草稿。"); return; }
+    add(r.path);
+    walked.add(edgeKey(ROAD_SEGS[cur.si][4], ROAD_SEGS[cur.si][5]));
+    for (let k = 1; k < r.nodes.length; k++) walked.add(edgeKey(r.nodes[k - 1], r.nodes[k]));
+    walked.add(edgeKey(ROAD_SEGS[r.end.si][4], ROAD_SEGS[r.end.si][5]));
+    cur = r.end;
+  };
+  const usable = st => st.kind === "road" ? roadNames(st.name).size > 0 : coords[st.name] || isTurn(st) || st.action === "uturn" || st.action === "end";
+  const list = steps.filter(st => {
+    if (st.kind === "road" && !roadNames(st.name).size) { warn.push(`地圖上找不到「${st.name}」，這段先略過。`); return false; }
+    return usable(st);
+  });
+  list.forEach((st, i) => {
+    const next = list[i + 1], after = list[i + 2];
+    if (st.kind === "place") {
+      const c = coords[st.name];
+      if (!cur && c) {
+        const on = next && next.kind === "road" ? roadNames(next.name) : null, [x, y] = placeXY(c);
+        cur = snapOnRoad(x, y, on); add([[cur.x, cur.y]]);
+      } else if (cur && c && (!list[i - 1] || list[i - 1].kind !== "road")) {
+        const [x, y] = placeXY(c); leg(snapOnRoad(x, y, null), new Set());
+      }
+      // turning back on a divided road: return along the opposite carriageway when one is close by
+      if (cur && st.action === "uturn" && next && next.kind === "road") {
+        const other = snapOnRoad(cur.x, cur.y, roadNames(next.name), walked);
+        if (other && other.d > 1 && other.d <= 25) { add([[other.x, other.y]]); cur = other; }
+      }
+      return;
+    }
+    const N = roadNames(st.name);
+    let goal = null, aim = null;
+    if (next && next.kind === "road") {
+      const S = roadNames(next.name), j = junction(N, S);
+      if (j.gap > 40) warn.push(`「${st.name}」和「${next.name}」在地圖上沒有接在一起，請檢查這段。`);
+      goal = { nodes: j.nodes };
+    } else if (next && isTurn(next) && after && after.kind === "road") {
+      const j = junction(N, roadNames(after.name)), c = coords[next.name];
+      if (j.gap > 40) warn.push(`「${st.name}」和「${after.name}」在地圖上沒有接在一起，請檢查這段。`);
+      let nodes = j.nodes;
+      if (c) { const [x, y] = placeXY(c), near = [...nodes].filter(n => Math.hypot(NX[n] - x, NY[n] - y) <= 150); if (near.length) nodes = new Set(near); aim = [x, y]; }
+      goal = { nodes };
+    } else if (next && coords[next.name]) {
+      const [x, y] = placeXY(coords[next.name]);
+      goal = snapOnRoad(x, y, N); aim = [x, y];
+      if (goal.d > 150) warn.push(`「${next.name}」離「${st.name}」有 ${Math.round(goal.d)} 公尺，請確認這個位置。`);
+    }
+    const nodeList = [...nodesOf(N)];
+    const farFrom = (x, y) => nodeList.reduce((b, n) => Math.hypot(NX[n] - x, NY[n] - y) > Math.hypot(NX[b] - x, NY[b] - y) ? n : b, nodeList[0]);
+    if (!cur) {
+      const g = goal ? (goal.nodes ? [NX[[...goal.nodes][0]], NY[[...goal.nodes][0]]] : [goal.x, goal.y]) : [NX[nodeList[0]], NY[nodeList[0]]];
+      cur = nodeSpot(farFrom(g[0], g[1])); add([[cur.x, cur.y]]);
+      warn.push(`沒有寫從「${st.name}」哪裡開始，先從路的一端畫，請確認。`);
+    }
+    if (!goal) { goal = { nodes: new Set([farFrom(cur.x, cur.y)]) }; warn.push(`沒有寫「${st.name}」走到哪裡，先畫到路尾，請確認。`); }
+    leg(goal, N);
+  });
+  return { path, warn };
+}
+
+const PASS_KEY = "yilanTeamPass";
+const getPass = () => { try { return localStorage.getItem(PASS_KEY) || ""; } catch (e) { return ""; } };
+const setPass = v => { try { if (v) localStorage.setItem(PASS_KEY, v); else localStorage.removeItem(PASS_KEY); } catch (e) {} };
+const localDay = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
+let aiPick = null; // { data, coords, need }
+function clearAi() { $("aiText").value = ""; $("aiResult").hidden = true; }
+function showAiWarn(items) {
+  const ul = $("aiWarn"); ul.innerHTML = ""; ul.hidden = !items.length;
+  items.forEach(t => { const li = document.createElement("li"); li.textContent = t; ul.appendChild(li); });
+}
+function nextPick() {
+  if (!aiPick.need.length) { const { data, coords } = aiPick; endPick(); finishAi(data, coords); return; }
+  $("pickText").textContent = `地圖資料查不到「${aiPick.need[0]}」，請在地圖上點它的位置`;
+  $("pickbar").hidden = false; document.body.classList.add("busy"); showMap();
+}
+function endPick() { aiPick = null; $("pickbar").hidden = true; document.body.classList.remove("busy"); }
+map.on("click", e => { if (aiPick) { aiPick.coords[aiPick.need.shift()] = { lat: e.latlng.lat, lng: e.latlng.lng }; nextPick(); } });
+$("btnPickCancel").onclick = () => { endPick(); $("aiResult").hidden = true; };
+function finishAi(data, coords) {
+  const { path, warn } = buildRoute(data.steps, coords);
+  showAiWarn([...(data.questions || []), ...warn]);
+  if (path.length < 2) { $("aiResult").hidden = false; toast("畫不出路線，請把路名寫清楚再試一次。"); return; }
+  $("aiDate").value = /^\d{4}-\d{2}-\d{2}$/.test(data.date) ? data.date : localDay();
+  $("aiNote").value = data.note || "";
+  $("aiResult").hidden = false;
+  startDraft([path], { left: 1, right: 2 }[data.side] || 0);
+}
+function applyAiReply(data) {
+  const coords = {};
+  (data.steps || []).forEach(st => {
+    if (st.kind !== "place" || coords[st.name]) return;
+    const found = data.places && data.places[st.name];
+    if (found) { coords[st.name] = found; return; }
+    const q = normName(st.name), poi = DATA.p.find(p => normName(p[2]) === q); // landmarks already on the map
+    if (poi) coords[st.name] = { lat: poi[0], lng: poi[1] };
+  });
+  const steps = data.steps || [];
+  if (!steps.length) { showAiWarn(data.questions && data.questions.length ? data.questions : ["看不出路線，請寫出路名和轉彎的地方。"]); $("aiResult").hidden = false; return; }
+  aiPick = { data, coords, need: placesNeeded(steps, coords) };
+  nextPick();
+}
+$("btnAi").onclick = async () => {
+  const text = $("aiText").value.trim();
+  if (!text) { toast("請先輸入今天走的路線"); return; }
+  if (drawing || editing || aiPick) { toast("請先完成或取消地圖上正在進行的操作"); return; }
+  const pass = $("aiPass").value.trim() || getPass();
+  if (!pass) { $("aiPassRow").hidden = false; $("aiPass").focus(); toast("請輸入團隊密碼"); return; }
+  const btn = $("btnAi"); btn.disabled = true; btn.textContent = "AI 處理中，大約要等半分鐘…";
+  try {
+    const res = await fetch(window.ROUTE_AI_URL, { method: "POST", headers: { "Content-Type": "application/json", "X-Team-Password": pass }, body: JSON.stringify({ text, today: localDay() }) });
+    if (res.status === 401) { setPass(""); $("aiPass").value = ""; $("aiPassRow").hidden = false; $("aiPass").focus(); toast("團隊密碼不對，請再輸入一次"); return; }
+    if (res.status === 429) { toast("今天的 AI 次數用完了，明天再試，或先用手動畫線。"); return; }
+    if (!res.ok) { toast("AI 暫時無法處理，請稍後再試，或先用手動畫線。"); return; }
+    setPass(pass); $("aiPassRow").hidden = true; $("aiPass").value = "";
+    applyAiReply(await res.json());
+  } catch (e) { toast("連不上 AI 服務，請檢查網路後再試一次。"); }
+  finally { btn.disabled = false; btn.textContent = "讓 AI 畫出來"; }
+};
 
 // ---------- my location (for drawing while out on the street) ----------
 let meDot = null, meRing = null, locating = false, firstFix = false;
@@ -1091,6 +1337,7 @@ function subscribe() {
       col = firebase.firestore().collection("walks");
       softDelete = true;
       subscribe();
+      if (window.ROUTE_AI_URL) $("aiBox").hidden = false;
     } catch (e) { setStatus("err", "連不上資料庫，請重新整理"); }
     return;
   }
